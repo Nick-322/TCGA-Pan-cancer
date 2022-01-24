@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Jul 11 19:28:34 2021
+
+@author: yusaku.nitta
+"""
+import pandas as pd
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras 
+import seaborn as sns
+from imblearn.over_sampling import SMOTE
+import matplotlib.pyplot as plt
+import os
+from collections import Counter
+import time 
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense 
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.metrics import categorical_crossentropy
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC
+from sklearn.naive_bayes import GaussianNB
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neighbors import KNeighborsClassifier
+
+from sklearn.metrics import accuracy_score
+from sklearn.inspection import permutation_importance
+from sklearn.decomposition import PCA
+from sklearn.model_selection import train_test_split 
+from sklearn.model_selection import KFold 
+from sklearn.model_selection import StratifiedKFold
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.feature_selection import RFE
+from sklearn.feature_selection import SelectKBest, GenericUnivariateSelect, chi2 
+from sklearn import preprocessing 
+
+from sklearn.datasets import make_classification
+from sklearn.metrics import plot_confusion_matrix, ConfusionMatrixDisplay
+from sklearn.model_selection import train_test_split
+from sklearn import metrics
+import scikitplot as skplt
+from sklearn.metrics import classification_report 
+
+from sklearn.preprocessing import LabelEncoder 
+#read csv data and remove unnamed column at position 0
+dataframe =  pd.read_csv('TCGA.csv', index_col = [0, 20532])
+print(dataframe.shape)
+
+data = dataframe.values
+X = dataframe.drop(columns=['Class'], axis =1)
+y = dataframe['Class']
+y = LabelEncoder().fit_transform(y)
+
+#BRCA(class0) = 300, COAD(class1)=78, KIRC(class2)= 146, LUAD(class3)=141 PRAD(class4) = 136,  
+
+counter = Counter(y)
+print('Shape of dataframe without output', X.shape)
+print('dataframe before oversampling')
+'''
+ 
+#oversampling with SMOTE function
+oversample = SMOTE()
+X,y = oversample.fit_resample(X, y)
+counter= Counter(y)
+
+'''
+print('Shape of oversampled dataframe without output', X.shape)
+print('\ndataframe after oversampling')
+for k,v in counter.items():
+    per = v/len(y)*100
+    print('Class = %d, sample= %d(%.3f%%)' %(k,v,per))
+'''
+
+#remove all but highest scoring features 
+X = GenericUnivariateSelect(chi2, mode = 'percentile', param = 5).fit_transform(X, y)
+print('Shape of X ofter feature selection: ', X.shape)
+#convert string values ('CLass') to integers
+y_factorize = pd.factorize(y)
+y = y_factorize[0]
+
+#normalizing dataset
+normalizer = preprocessing.Normalizer().fit(X)
+X = normalizer.transform(X)
+
+#Define the F-fold Cross Validator for Neural Network
+kf = StratifiedKFold(n_splits = 5, shuffle=True, random_state=42)
+#K-fold validation model evaluation 
+actual_y = []
+predict_y = []
+fold=0
+auc_roc_values = []
+probas_y =[]
+print('\nNeural Network')
+fold_no = 1  
+start = time.time()  
+for train_index, test_index in kf.split(X,y):
+    train_x = X[train_index]
+    train_y = y[train_index]
+    test_x = X[test_index]
+    test_y = y[test_index]
+    
+    model = Sequential([Dense(units = 36, input_shape = (X.shape[1],), activation = 'relu'),
+            Dense(units = 60, activation = 'relu'),
+            Dense(units = 30, activation = 'relu'), 
+            Dense(units = 5, activation ='softmax')])
+
+    model.compile(optimizer = Adam(learning_rate =0.001), loss = 'sparse_categorical_crossentropy')
+    model.fit(x = train_x, y = train_y, batch_size=10, epochs = 100, shuffle = True, verbose=0)
+    
+    pred = model.predict(test_x)
+   
+    actual_y.append(test_y) #put values of folds in to actual_y list
+    y_probability = model.predict(test_x)
+    probas_y.append(y_probability)
+    predict_y.append(pred)
+    pred = np.argmax(pred, axis=1)
+    
+    scores = metrics.accuracy_score(test_y, pred)
+    print('\nAccuracy Score for fold', fold_no, ':', scores)
+
+    auc_roc = metrics.roc_auc_score(y_true = test_y, y_score =y_probability, multi_class = 'ovo') #later, TRY'ovr' for multiclass 
+    auc_roc_values.append(auc_roc)
+    print('Fold', fold_no, 'score(auc_roc):', auc_roc)
+    fold_no += 1
+    
+actual_y = np.concatenate(actual_y)
+predict_y = np.concatenate(predict_y)
+predict_y = np.argmax(predict_y, axis=1)
+probas_y = np.concatenate(probas_y)
+
+overall_accuracy_score = accuracy_score(actual_y, predict_y)
+print('\nOverall accuracy score; ', overall_accuracy_score)
+
+#calculate the average value for auc score 
+average = 0 
+for auc_score in auc_roc_values:
+    average  += auc_score
+print('Overall score (auc_roc);', average/5)
+end = time.time()
+print("Time elapsed: ", end - start)
+
+#plotting roc curve 
+skplt.metrics.plot_roc_curve(y_true = actual_y, y_probas = probas_y, title = 'ROC Curves of Neural Network')  
+plt.show()  
+  
+#Confusuion matrix 
+matrix = metrics.confusion_matrix(actual_y, predict_y)
+CMplot = metrics.ConfusionMatrixDisplay(matrix)
+CMplot.plot(cmap='Blues')
+#Classification report for Neural network
+print('classification report for Neural Network')
+print(classification_report(actual_y, predict_y, zero_division = 0, digits=4)) #, digits=3
+      
+#GradientBoostingClassifier(n_estimators= 60, max_depth = 4 )
+models = [LogisticRegression(max_iter=10000), DecisionTreeClassifier(), GaussianNB(), SVC(probability = True ), RandomForestClassifier(), KNeighborsClassifier(), GradientBoostingClassifier(n_estimators= 50, max_depth = 3 )]
+current_model = ['Logistic Regression', 'Decision Tree', 'Naive Bayes', 'Support Vector Machine', 'Random Forest', 'K Nearest Neighbors', 'Gradient Boosting']
+#feed data to each of 5 classification models 
+
+for i in range(0, len(models)):
+  print('\n'+ current_model[i])
+ 
+  # 10-fold cross validation 
+  fold_no = 1
+  actual_y = []
+  predict_y = []
+  fold=0
+  auc_roc_values = [] 
+  probas_y =[]
+  start = time.time() 
+  for train_index, test_index in kf.split(X,y):
+    train_x = X[train_index]
+    train_y = y[train_index]
+    test_x = X[test_index]
+    test_y = y[test_index]
+    
+    model = models[i]
+    model.fit(train_x, train_y)
+
+    pred = model.predict(test_x)
+    actual_y.append(test_y) #put values of folds in to actual_y list
+    y_probability = model.predict_proba(test_x)
+    probas_y.append(y_probability)
+ 
+
+    predict_y.append(pred) #put values of folds in to predict_y list
+    scores = metrics.accuracy_score(test_y, pred)
+    print('\nAccuracy Score for fold', fold_no, ':', scores) 
+    
+    labels = [0,1,2,3,4]
+    y_score = model.predict_proba(test_x)
+    auc_roc = metrics.roc_auc_score(y_true = test_y, y_score = y_probability, multi_class = 'ovo') 
+    auc_roc_values.append(auc_roc)       
+    print('Fold', fold_no, 'score(auc_roc):', auc_roc)
+    fold_no += 1
+   
+    #metrics.ConfusionMatrixDisplay(model, test_x, test_y)
+      
+    #produce learning curve of each classification method 
+  #skplt.estimators.plot_learning_curve(model, test_x, test_y, title=current_model[i], scoring = 'accuracy')
+        
+  actual_y = np.concatenate(actual_y)
+  predict_y = np.concatenate(predict_y)
+  probas_y = np.concatenate(probas_y)
+  overall_accuracy_score = accuracy_score(actual_y, predict_y)
+  print('\nOverall accuracy score; ', overall_accuracy_score)
+  
+  average = 0 
+  for auc_score in auc_roc_values:
+        average  += auc_score
+  print('Overall score (auc_roc):', average/5)  
+  end = time.time()
+  print("Time elapsed: ", end - start)
+  
+  #plotting roc curve
+  skplt.metrics.plot_roc_curve(y_true = actual_y, y_probas = probas_y, title = 'ROC Curves of ' + current_model[i])  
+  plt.show()  
+  
+  #produce confusion matrix for test dataset
+  matrix = metrics.confusion_matrix(actual_y, predict_y)
+  CMplot = metrics.ConfusionMatrixDisplay(matrix)
+  CMplot.plot(cmap = 'Blues')
+   #show a report of each classification
+  print('classification report of ', current_model[i])
+  print(classification_report(actual_y, predict_y, zero_division = 0, digits=4))
+  
+  
