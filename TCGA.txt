@@ -61,20 +61,19 @@ y = LabelEncoder().fit_transform(y)
 counter = Counter(y)
 print('Shape of dataframe without output', X.shape)
 print('dataframe before oversampling')
-'''
+
  
 #oversampling with SMOTE function
 oversample = SMOTE()
 X,y = oversample.fit_resample(X, y)
 counter= Counter(y)
 
-'''
+
 print('Shape of oversampled dataframe without output', X.shape)
 print('\ndataframe after oversampling')
 for k,v in counter.items():
     per = v/len(y)*100
     print('Class = %d, sample= %d(%.3f%%)' %(k,v,per))
-'''
 
 #remove all but highest scoring features 
 X = GenericUnivariateSelect(chi2, mode = 'percentile', param = 5).fit_transform(X, y)
